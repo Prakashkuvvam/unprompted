@@ -1,0 +1,103 @@
+<svg viewBox="0 0 900 320" xmlns="http://www.w3.org/2000/svg" width="100%" font-family="'JetBrains Mono', 'Fira Code', monospace">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0c0c0f"/>
+      <stop offset="100%" style="stop-color:#0f0f18"/>
+    </linearGradient>
+    <linearGradient id="divLine" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   style="stop-color:#0c0c0f;stop-opacity:1"/>
+      <stop offset="20%"  style="stop-color:#2a2a3e;stop-opacity:1"/>
+      <stop offset="50%"  style="stop-color:#a78bfa;stop-opacity:1"/>
+      <stop offset="80%"  style="stop-color:#2a2a3e;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#0c0c0f;stop-opacity:1"/>
+    </linearGradient>
+    <linearGradient id="footGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   style="stop-color:#07070a"/>
+      <stop offset="100%" style="stop-color:#0a0a10"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="320" rx="14" fill="url(#bgGrad)"/>
+  <rect width="900" height="320" rx="14" fill="none" stroke="#1e1e2e" stroke-width="1"/>
+
+  <!-- Terminal bar -->
+  <rect x="0" y="0" width="900" height="42" rx="14" fill="#161620"/>
+  <rect x="0" y="28" width="900" height="14" fill="#161620"/>
+  <rect x="0" y="41" width="900" height="1" fill="#1e1e2e"/>
+  <circle cx="22" cy="21" r="6" fill="#ff5f57"/>
+  <circle cx="42" cy="21" r="6" fill="#febc2e"/>
+  <circle cx="62" cy="21" r="6" fill="#28c840"/>
+  <text x="450" y="26" text-anchor="middle" fill="#3e3e5a" font-size="11" letter-spacing="0.08em">unprompted — bash</text>
+
+  <!-- Floating particles -->
+  <circle cx="80"  cy="130" r="1.2" fill="#a78bfa" opacity="0.18"/>
+  <circle cx="820" cy="100" r="0.8" fill="#818cf8" opacity="0.14"/>
+  <circle cx="150" cy="260" r="1.0" fill="#a78bfa" opacity="0.12"/>
+  <circle cx="760" cy="240" r="1.4" fill="#818cf8" opacity="0.16"/>
+  <circle cx="50"  cy="190" r="0.6" fill="#a78bfa" opacity="0.10"/>
+  <circle cx="860" cy="180" r="1.0" fill="#818cf8" opacity="0.12"/>
+  <circle cx="300" cy="280" r="0.8" fill="#a78bfa" opacity="0.09"/>
+  <circle cx="600" cy="270" r="1.1" fill="#818cf8" opacity="0.11"/>
+
+  <!-- Connector lines between particles -->
+  <line x1="80" y1="130" x2="150" y2="260" stroke="#a78bfa" stroke-width="0.4" opacity="0.07"/>
+  <line x1="820" y1="100" x2="760" y2="240" stroke="#818cf8" stroke-width="0.4" opacity="0.07"/>
+
+  <!-- Tagline -->
+  <text x="450" y="82" text-anchor="middle" fill="#4a4a6a" font-size="11" letter-spacing="0.25em" font-weight="400">CLI TOOL · LLM OUTPUT → PROJECT ON DISK</text>
+
+  <!-- Logo -->
+  <text x="450" y="134" text-anchor="middle" font-size="42" font-weight="700" letter-spacing="0.12em">
+    <tspan fill="#a78bfa">un</tspan><tspan fill="#e8e8f0">prompted</tspan>
+  </text>
+
+  <!-- Version line -->
+  <text x="450" y="158" text-anchor="middle" fill="#4a4a6a" font-size="12" letter-spacing="0.14em">v 0 . 1 . 0 · MIT License · Python 3.10+</text>
+
+  <!-- Divider -->
+  <rect x="60" y="172" width="780" height="1" fill="url(#divLine)" opacity="0.9"/>
+
+  <!-- Command block -->
+  <rect x="175" y="183" width="550" height="80" rx="7" fill="#0a0a0d" stroke="#1e1e30" stroke-width="1"/>
+  <text x="200" y="205" fill="#a78bfa" font-size="13">$</text>
+  <text x="218" y="205" fill="#c8c8e8" font-size="13" letter-spacing="0.03em">unprompted llm_output.txt my-project/</text>
+
+  <text x="200" y="225" fill="#28c840" font-size="12">✓</text>
+  <text x="218" y="225" fill="#7070a0" font-size="12">Found   </text>
+  <text x="295" y="225" fill="#e8e8f0" font-size="12">11 code blocks</text>
+
+  <text x="200" y="241" fill="#28c840" font-size="12">✓</text>
+  <text x="218" y="241" fill="#7070a0" font-size="12">Created </text>
+  <text x="295" y="241" fill="#e8e8f0" font-size="12">11 files in my-project/</text>
+  <text x="560" y="241" fill="#a78bfa" font-size="12">⚡ 0.03s</text>
+
+  <!-- Stats row -->
+  <text x="197" y="283" text-anchor="middle" fill="#a78bfa"  font-size="18" font-weight="700">11</text>
+  <text x="197" y="298" text-anchor="middle" fill="#3e3e5a"  font-size="10" letter-spacing="0.14em">FILES</text>
+
+  <rect x="247" y="272" width="1" height="30" fill="#1e1e2e"/>
+
+  <text x="320" y="283" text-anchor="middle" fill="#818cf8" font-size="18" font-weight="700">113</text>
+  <text x="320" y="298" text-anchor="middle" fill="#3e3e5a" font-size="10" letter-spacing="0.14em">TESTS</text>
+
+  <rect x="380" y="272" width="1" height="30" fill="#1e1e2e"/>
+
+  <text x="450" y="283" text-anchor="middle" fill="#a78bfa" font-size="18" font-weight="700">0.03s</text>
+  <text x="450" y="298" text-anchor="middle" fill="#3e3e5a" font-size="10" letter-spacing="0.14em">RUNTIME</text>
+
+  <rect x="520" y="272" width="1" height="30" fill="#1e1e2e"/>
+
+  <text x="580" y="283" text-anchor="middle" fill="#818cf8" font-size="18" font-weight="700">6</text>
+  <text x="580" y="298" text-anchor="middle" fill="#3e3e5a" font-size="10" letter-spacing="0.14em">PATTERNS</text>
+
+  <rect x="630" y="272" width="1" height="30" fill="#1e1e2e"/>
+
+  <text x="710" y="283" text-anchor="middle" fill="#a78bfa" font-size="18" font-weight="700">100%</text>
+  <text x="710" y="298" text-anchor="middle" fill="#3e3e5a" font-size="10" letter-spacing="0.14em">OFFLINE</text>
+
+  <!-- Footer band -->
+  <rect x="0" y="308" width="900" height="12" rx="0" fill="url(#footGrad)"/>
+  <rect x="0" y="308" width="900" height="12" rx="0" fill="none"/>
+  <rect x="0" y="307" width="900" height="1" fill="#1a1a2a"/>
+</svg>
