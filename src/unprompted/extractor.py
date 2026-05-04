@@ -1,0 +1,417 @@
+"""
+Stage 2 — Extractor.
+
+Maps each RawBlock to a FileObject by:
+1. Scanning context lines for filename indicators
+2. Normalising and deduplicating paths
+3. Generating fallback names when no filename is detectable
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from pathlib import Path
+
+from unprompted.models import ExtractResult, FileObject, RawBlock
+from unprompted.utils import (
+    _SPECIAL_FILENAMES,
+    auto_filename,
+    deduplicate_path,
+    is_valid_filepath,
+    language_to_extension,
+    normalise_path,
+)
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Filename indicator patterns (checked in priority order)
+# ---------------------------------------------------------------------------
+
+# ### path/to/file.py  or  ## file.py
+# Also matches: ## `file.py`  and  ## **file.py**
+# The backtick/bold markers are stripped from the captured group
+_HEADING_PATTERN: re.Pattern[str] = re.compile(
+    r"^#{1,6}\s+(?P<path>.+?)\s*$"
+)
+
+# File: path/to/file.py
+# Also matches: File 1: path/to/file.py, File 2: `path/to/file.py`
+_FILE_LABEL_PATTERN: re.Pattern[str] = re.compile(
+    r"^(?:file(?:\s*\d+)?|filename|path)\s*[:\-–]\s*(?P<path>.+?)\s*$",
+    re.IGNORECASE,
+)
+
+# `path/to/file.py`  — backtick-wrapped inline code
+_BACKTICK_PATH_PATTERN: re.Pattern[str] = re.compile(
+    r"^`(?P<path>[^`]+)`\s*$"
+)
+
+# **path/to/file.py**  — bold markdown
+_BOLD_PATH_PATTERN: re.Pattern[str] = re.compile(
+    r"^\*{1,2}(?P<path>[^*]+)\*{1,2}\s*$"
+)
+
+# Standalone line that looks like a path (last resort heuristic)
+_STANDALONE_PATTERN: re.Pattern[str] = re.compile(
+    r"^(?P<path>[a-zA-Z0-9_\-./\\]+\.[a-zA-Z0-9]+)\s*$"
+)
+
+# Standalone special filename (no extension) e.g. Dockerfile, Makefile
+_SPECIAL_FILE_PATTERN: re.Pattern[str] = re.compile(
+    r"^(?P<path>[a-zA-Z][a-zA-Z0-9_\-]*)$"
+)
+
+# ✅ Increased from 6 to 10 — handles more lines between heading and fence
+_MAX_CONTEXT_SCAN: int = 10
+
+
+def extract_files(
+    blocks: list[RawBlock],
+    default_ext: str = ".txt",
+) -> ExtractResult:
+    """
+    Convert a list of RawBlocks into a list of FileObjects.
+
+    For each block, scans context lines (nearest first) for a filename.
+    Falls back to auto-generated names when none is found.
+
+    Args:
+        blocks:      Raw blocks from the parser stage.
+        default_ext: Extension used when language hint is unavailable
+                     and no filename is found.
+
+    Returns:
+        An ExtractResult with all resolved FileObjects.
+    """
+    files: list[FileObject] = []
+    skipped: list[int] = []
+    claimed_paths: set[str] = set()
+    auto_counter = 1
+
+    for block in blocks:
+        logger.debug(
+            "Processing block #%d (lang=%r, context lines=%d)",
+            block.block_index,
+            block.language,
+            len(block.context_before),
+        )
+
+        # Skip genuinely empty blocks
+        if not block.content.strip():
+            logger.debug(
+                "Block #%d is empty — skipping", block.block_index
+            )
+            skipped.append(block.block_index)
+            continue
+
+        # Attempt to detect filename from context
+        detected = _detect_filename(block.context_before)
+
+        if detected:
+            raw_path = normalise_path(detected)
+            raw_path = _ensure_extension(raw_path, block.language)
+            final_path = deduplicate_path(raw_path, claimed_paths)
+            logger.debug(
+                "Block #%d → detected path %r → final %r",
+                block.block_index,
+                detected,
+                final_path,
+            )
+        else:
+            fallback = auto_filename(auto_counter, block.language)
+            final_path = deduplicate_path(fallback, claimed_paths)
+            auto_counter += 1
+            logger.warning(
+                "Block #%d → no filename detected, using %r",
+                block.block_index,
+                final_path,
+            )
+
+        claimed_paths.add(final_path)
+        files.append(
+            FileObject(
+                path=final_path,
+                content=block.content,
+                language=block.language,
+                source_block_index=block.block_index,
+            )
+        )
+
+    logger.info(
+        "Extractor resolved %d file(s), %d skipped",
+        len(files),
+        len(skipped),
+    )
+    return ExtractResult(files=files, skipped_blocks=skipped)
+
+
+def _extract_path_from_text(text: str) -> str | None:
+    """
+    Extract a file path from text that may contain backticks or bold markers.
+
+    Tries patterns in order:
+    1. Backtick-wrapped: `path/to/file.py`
+    2. Bold-wrapped: **path/to/file.py**
+    3. Bare path (validated)
+
+    Args:
+        text: Text that may contain a path.
+
+    Returns:
+        Extracted path string, or None if no valid path found.
+    """
+    stripped = text.strip()
+
+    # Try backtick-wrapped
+    m = _BACKTICK_PATH_PATTERN.match(stripped)
+    if m:
+        return m.group("path").strip()
+
+    # Try bold-wrapped
+    m = _BOLD_PATH_PATTERN.match(stripped)
+    if m:
+        return m.group("path").strip()
+
+    # Try stripping backticks/bold manually (for partial matches)
+    cleaned = stripped.strip("`").strip("*").strip()
+    if cleaned and is_valid_filepath(cleaned):
+        return cleaned
+
+    # Check if it's a special filename
+    if cleaned.lower() in _SPECIAL_FILENAMES:
+        return cleaned
+
+    return None
+
+
+def _detect_filename(context_lines: list[str]) -> str | None:
+    """
+    Scan context lines in reverse (nearest to the code block first)
+    and return the first line that looks like a filename/path.
+
+    Stops scanning early when:
+    - Two consecutive blank lines encountered
+    - _MAX_CONTEXT_SCAN non-empty lines have been checked
+
+    Priority order:
+        1. Explicit 'File:' label (standalone or in heading)
+        2. Markdown heading with path
+        3. Backtick-wrapped path
+        4. Bold-wrapped path
+        5. Standalone special filename (Dockerfile etc.)
+        6. Standalone bare path
+
+    Args:
+        context_lines: Lines of text before the code block.
+
+    Returns:
+        The raw filename/path string, or None if not found.
+    """
+    scan_lines = _get_nearest_lines(context_lines, _MAX_CONTEXT_SCAN)
+
+    for line in scan_lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Priority 1a — explicit label on standalone line (highest confidence)
+        # e.g., "File: config.py" or "Filename: src/app.py"
+        m = _FILE_LABEL_PATTERN.match(stripped)
+        if m:
+            candidate = m.group("path").strip()
+            # Extract path from backticks/bold if present
+            extracted = _extract_path_from_text(candidate)
+            if extracted:
+                logger.debug("File label match: %r", extracted)
+                return extracted
+            # Fallback: use as-is if it looks valid
+            cleaned = candidate.strip("`").strip("*").strip()
+            if is_valid_filepath(cleaned) or cleaned.lower() in _SPECIAL_FILENAMES:
+                logger.debug("File label match (cleaned): %r", cleaned)
+                return cleaned
+
+        # Priority 1b — heading that contains a file label
+        # e.g., "## File 1: `go.mod`" or "### File: config.py"
+        m = _HEADING_PATTERN.match(stripped)
+        if m:
+            heading_content = m.group("path").strip()
+
+            # First, check if heading content matches file label pattern
+            label_match = _FILE_LABEL_PATTERN.match(heading_content)
+            if label_match:
+                candidate = label_match.group("path").strip()
+                extracted = _extract_path_from_text(candidate)
+                if extracted:
+                    logger.debug(
+                        "Heading with file label match: %r", extracted
+                    )
+                    return extracted
+                # Fallback: clean and validate
+                cleaned = candidate.strip("`").strip("*").strip()
+                if is_valid_filepath(cleaned) or cleaned.lower() in _SPECIAL_FILENAMES:
+                    logger.debug(
+                        "Heading with file label match (cleaned): %r", cleaned
+                    )
+                    return cleaned
+
+            # Priority 2 — heading is directly a path
+            # e.g., "### app.py" or "## `src/config.py`"
+            # Strip backtick and bold markers from heading content
+            candidate = heading_content.strip("`").strip("*").strip()
+
+            if (
+                is_valid_filepath(candidate)
+                or candidate.lower() in _SPECIAL_FILENAMES
+                or _looks_like_path(candidate)
+            ):
+                logger.debug("Heading match: %r", candidate)
+                return candidate
+            else:
+                # Heading is prose — stop searching upward
+                # e.g., "### Now let's create the routes"
+                logger.debug(
+                    "Heading found but looks like prose, stopping: %r",
+                    heading_content,
+                )
+                return None
+
+        # Priority 3 — backtick wrapped standalone line
+        # e.g.,  `src/utils.py`
+        m = _BACKTICK_PATH_PATTERN.match(stripped)
+        if m:
+            candidate = m.group("path").strip()
+            if is_valid_filepath(candidate):
+                logger.debug("Backtick match: %r", candidate)
+                return candidate
+
+        # Priority 4 — bold wrapped standalone line
+        # e.g.,  **templates/index.html**
+        m = _BOLD_PATH_PATTERN.match(stripped)
+        if m:
+            candidate = m.group("path").strip()
+            if is_valid_filepath(candidate):
+                logger.debug("Bold match: %r", candidate)
+                return candidate
+
+        # Priority 5 — standalone special filename
+        # e.g.,  Dockerfile  /  Makefile
+        m = _SPECIAL_FILE_PATTERN.match(stripped)
+        if m:
+            candidate = m.group("path").strip()
+            if candidate.lower() in _SPECIAL_FILENAMES:
+                logger.debug("Special filename match: %r", candidate)
+                return candidate
+
+        # Priority 6 — standalone path with extension
+        # e.g.,  static/style.css  /  scripts/start.sh
+        m = _STANDALONE_PATTERN.match(stripped)
+        if m:
+            candidate = m.group("path").strip()
+            if is_valid_filepath(candidate):
+                logger.debug("Standalone match: %r", candidate)
+                return candidate
+
+    return None
+
+
+def _get_nearest_lines(
+    context_lines: list[str],
+    max_lines: int,
+) -> list[str]:
+    """
+    Return up to max_lines context lines in reverse order.
+
+    Stops after TWO consecutive blank lines.
+
+    Why two and not one:
+        LLM output very commonly has this pattern:
+
+            ## `src/oss_analyzer/config.py`
+                                              ← one blank line
+            ```python
+                                              ← fence opens here
+
+        Stopping at the first blank would miss the heading entirely.
+        Allowing up to two consecutive blanks catches these cases
+        while still preventing headings from much earlier in the
+        document leaking through.
+
+    Args:
+        context_lines: All context lines before the block.
+        max_lines:     Maximum number of lines to return.
+
+    Returns:
+        Filtered list of lines, nearest first.
+    """
+    result: list[str] = []
+    consecutive_blanks = 0
+
+    for line in reversed(context_lines):
+        if not line.strip():
+            consecutive_blanks += 1
+            # ✅ Stop after TWO consecutive blank lines
+            if consecutive_blanks > 2:
+                break
+        else:
+            # Reset blank counter when we hit a non-blank line
+            consecutive_blanks = 0
+            result.append(line)
+            if len(result) >= max_lines:
+                break
+
+    return result
+
+
+def _looks_like_path(text: str) -> bool:
+    """
+    Lightweight check — does text contain a dot or slash?
+
+    Used for heading matches where the heading prefix already
+    signals intent, so we can be slightly more lenient than
+    is_valid_filepath.
+
+    Args:
+        text: Stripped candidate text (backticks already removed).
+
+    Returns:
+        True if it contains a dot or slash and no spaces.
+    """
+    if " " in text:
+        return False
+    return "." in text or "/" in text or "\\" in text
+
+
+def _ensure_extension(path: str, language: str | None) -> str:
+    """
+    Add a file extension to path if it has none.
+
+    Handles special filenames (Dockerfile etc.) that intentionally
+    have no extension.
+
+    Args:
+        path:     Normalised file path.
+        language: Optional language hint from the code fence.
+
+    Returns:
+        Path string guaranteed to have an extension
+        (or is a known no-extension special file).
+    """
+    p = Path(path)
+
+    # Already has an extension — leave it alone
+    if p.suffix:
+        return path
+
+    # Known special filename with no extension — leave it alone
+    if p.name.lower() in _SPECIAL_FILENAMES:
+        logger.debug("Special filename, no extension added: %r", path)
+        return path
+
+    # Infer from language hint
+    inferred = language_to_extension(language)
+    ext = inferred if inferred else ".txt"
+    result = str(p.with_suffix(ext))
+    logger.debug("Added extension %r to %r → %r", ext, path, result)
+    return result
