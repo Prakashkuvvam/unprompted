@@ -1,0 +1,371 @@
+# Full Stack Todo App
+
+I'll create a complete full-stack todo application with a Flask backend
+and a simple HTML/CSS/JS frontend. Here's the complete project structure:
+
+```
+todo-app/
+├── app.py
+├── config.py
+├── requirements.txt
+├── Dockerfile
+├── .env.example
+├── static/
+│   ├── style.css
+│   └── app.js
+└── templates/
+    └── index.html
+```
+
+Let's start with the dependencies first.
+
+### requirements.txt
+```txt
+flask>=3.0.0
+flask-sqlalchemy>=3.1.0
+flask-cors>=4.0.0
+python-dotenv>=1.0.0
+gunicorn>=21.2.0
+```
+
+Now the environment configuration:
+
+File: .env.example
+```env
+FLASK_ENV=development
+FLASK_DEBUG=True
+SECRET_KEY=your-secret-key-here
+DATABASE_URL=sqlite:///todos.db
+PORT=5000
+```
+
+Here is the main configuration module.
+
+### config.py
+```python
+"""Application configuration."""
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+class Config:
+    """Base configuration."""
+
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "dev-secret-key")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///todos.db")
+    DEBUG: bool = False
+    TESTING: bool = False
+
+
+class DevelopmentConfig(Config):
+    """Development configuration."""
+    DEBUG: bool = True
+
+
+class ProductionConfig(Config):
+    """Production configuration."""
+    DEBUG: bool = False
+
+
+config_map: dict[str, type[Config]] = {
+    "development": DevelopmentConfig,
+    "production": ProductionConfig,
+    "default": DevelopmentConfig,
+}
+```
+
+Now the database models:
+
+`models.py`
+```python
+"""SQLAlchemy database models."""
+
+from datetime import datetime
+from flask_sqlalchemy import SQLAlchemy
+
+db = SQLAlchemy()
+
+
+class Todo(db.Model):
+    """Todo item model."""
+
+    __tablename__ = "todos"
+
+    id: int = db.Column(db.Integer, primary_key=True)
+    title: str = db.Column(db.String(200), nullable=False)
+    description: str = db.Column(db.Text, nullable=True)
+    completed: bool = db.Column(db.Boolean, default=False)
+    created_at: datetime = db.Column(
+        db.DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+    updated_at: datetime = db.Column(
+        db.DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "completed": self.completed,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+```
+
+The routes module handles all API endpoints.
+
+### api/routes.py
+```python
+"""API route handlers."""
+
+from flask import Blueprint, jsonify, request, abort
+from models import Todo, db
+
+api_bp = Blueprint("api", __name__, url_prefix="/api")
+
+
+@api_bp.route("/todos", methods=["GET"])
+def get_todos():
+    """Return all todo items."""
+    todos = Todo.query.order_by(Todo.created_at.desc()).all()
+    return jsonify({
+        "todos": [t.to_dict() for t in todos],
+        "count": len(todos),
+    })
+
+
+@api_bp.route("/todos", methods=["POST"])
+def create_todo():
+    """Create a new todo item."""
+    data = request.get_json()
+
+    if not data or not data.get("title"):
+        abort(400, description="Title is required.")
+
+    todo = Todo(
+        title=data["title"].strip(),
+        description=data.get("description", "").strip(),
+    )
+    db.session.add(todo)
+    db.session.commit()
+    return jsonify(todo.to_dict()), 201
+
+
+@api_bp.route("/todos/<int:todo_id>", methods=["PATCH"])
+def update_todo(todo_id: int):
+    """Update an existing todo item."""
+    todo = Todo.query.get_or_404(todo_id)
+    data = request.get_json()
+
+    if "title" in data:
+        todo.title = data["title"].strip()
+    if "completed" in data:
+        todo.completed = bool(data["completed"])
+
+    db.session.commit()
+    return jsonify(todo.to_dict())
+
+
+@api_bp.route("/todos/<int:todo_id>", methods=["DELETE"])
+def delete_todo(todo_id: int):
+    """Delete a todo item."""
+    todo = Todo.query.get_or_404(todo_id)
+    db.session.delete(todo)
+    db.session.commit()
+    return jsonify({"message": "Deleted successfully."})
+```
+
+Now the main application entry point:
+
+### app.py
+```python
+"""Flask application factory."""
+
+import os
+from flask import Flask
+from flask_cors import CORS
+from models import db
+from config import config_map
+from api.routes import api_bp
+
+
+def create_app(env: str | None = None) -> Flask:
+    """Application factory."""
+    env = env or os.getenv("FLASK_ENV", "development")
+    app = Flask(__name__)
+
+    cfg = config_map.get(env, config_map["default"])
+    app.config.from_object(cfg)
+    app.config["SQLALCHEMY_DATABASE_URI"] = cfg.DATABASE_URL
+
+    CORS(app)
+    db.init_app(app)
+    app.register_blueprint(api_bp)
+
+    with app.app_context():
+        db.create_all()
+
+    return app
+
+
+if __name__ == "__main__":
+    application = create_app()
+    application.run(
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "5000")),
+    )
+```
+
+The frontend template:
+
+**templates/index.html**
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Todo App</title>
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+    <div class="container">
+        <h1>My Todos</h1>
+        <form id="todo-form">
+            <input type="text" id="todo-title" placeholder="Add a todo..." required />
+            <button type="submit">Add</button>
+        </form>
+        <ul id="todo-list"></ul>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+```
+
+Styling for the frontend:
+
+static/style.css
+```css
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: system-ui, sans-serif;
+    background: #f5f5f5;
+    padding: 2rem;
+}
+
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 8px;
+    padding: 2rem;
+}
+
+h1 { margin-bottom: 1.5rem; color: #2563eb; }
+
+#todo-form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+
+#todo-title {
+    flex: 1;
+    padding: 0.6rem 1rem;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+button {
+    padding: 0.6rem 1.2rem;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.todo-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; }
+.todo-item.completed span { text-decoration: line-through; color: #999; }
+```
+
+Frontend JavaScript:
+
+`static/app.js`
+```javascript
+const API = "/api/todos";
+
+async function fetchTodos() {
+    const res = await fetch(API);
+    const data = await res.json();
+    renderTodos(data.todos);
+}
+
+function renderTodos(todos) {
+    const list = document.getElementById("todo-list");
+    list.innerHTML = "";
+    todos.forEach(todo => {
+        const li = document.createElement("li");
+        li.className = `todo-item ${todo.completed ? "completed" : ""}`;
+        li.innerHTML = `
+            <input type="checkbox" ${todo.completed ? "checked" : ""}
+                onchange="toggleTodo(${todo.id}, this.checked)" />
+            <span>${todo.title}</span>
+            <button onclick="deleteTodo(${todo.id})">Delete</button>
+        `;
+        list.appendChild(li);
+    });
+}
+
+async function toggleTodo(id, completed) {
+    await fetch(`${API}/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ completed }),
+    });
+    fetchTodos();
+}
+
+async function deleteTodo(id) {
+    await fetch(`${API}/${id}`, { method: "DELETE" });
+    fetchTodos();
+}
+
+document.getElementById("todo-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("todo-title");
+    await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: input.value.trim() }),
+    });
+    input.value = "";
+    fetchTodos();
+});
+
+fetchTodos();
+```
+
+### Dockerfile
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 5000
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:create_app()"]
+```
+
+### scripts/start.sh
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+export FLASK_ENV=development
+python -m flask run --port 5000
+```
